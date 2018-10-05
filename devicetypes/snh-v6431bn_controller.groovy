@@ -16,9 +16,9 @@
 
 metadata {
 	definition (name: "Samsung Smart Camera", namespace: "zhangquan0126", author: "Quan Zhang") {
-    	        capability "Configuration"
-                capability "Image Capture"
-	        capability "Sensor"
+        capability "Configuration"
+        capability "Image Capture"
+	    capability "Sensor"
 		capability "Video Camera"
 		capability "Video Capture"
 		capability "Refresh"
@@ -26,12 +26,15 @@ metadata {
 		capability "Health Check"
 
 		capability "Actuator"
-                command "start"
+
+        command "start"
 		command "clearDigestAuthData"
+        command "audioOn"
+        command "audioOff"
 	}
 
 	tiles(scale: 2) {
-    	       multiAttributeTile(name: "videoPlayer", type: "videoPlayer", width: 6, height: 4, canChangeIcon: true) {
+        multiAttributeTile(name: "videoPlayer", type: "videoPlayer", width: 6, height: 4, canChangeIcon: true) {
 			tileAttribute("device.switch", key: "CAMERA_STATUS") {
 				attributeState("active", label: "Active", icon: "st.camera.dlink-indoor", action: "switch.off", backgroundColor: "#79b821", defaultState: true)
 				attributeState("inactive", label: "Inactive", icon: "st.camera.dlink-indoor", action: "switch.on", backgroundColor: "#ffffff")
@@ -65,12 +68,12 @@ metadata {
 			state "turningoff", label:'turning off', icon:"st.camera.dropcam", backgroundColor:"#ffffff", nextState:"off"
 			state "off", label:'${name}', action:"on", icon:"st.camera.dropcam", backgroundColor:"#ffffff", nextState:"turningon"
 		}
-                standardTile("audio", "device.switch", width:2, height:2, decoration: "flat") {
+        standardTile("audio", "device.switch2", width:2, height:2, decoration: "flat") {
 			state "unknown", label:'check configuration', icon:"st.alarm.beep.beep", backgroundColor:"#e50000"
 			state "turningon", label:'turning on', icon:"st.alarm.beep.beep", backgroundColor:"#00a0dc", nextState:"on"
-			state "on", label:'${name}', action:"off", icon:"st.alarm.beep.beep", backgroundColor:"#00a0dc", nextState:"turningoff"
+			state "on", label:'${name}', action:"audioOff", icon:"st.alarm.beep.beep", backgroundColor:"#00a0dc", nextState:"turningoff"
 			state "turningoff", label:'turning off', icon:"st.alarm.beep.beep", backgroundColor:"#ffffff", nextState:"off"
-			state "off", label:'${name}', action:"on", icon:"st.alarm.beep.beep", backgroundColor:"#ffffff", nextState:"turningon"
+			state "off", label:'${name}', action:"audioOn", icon:"st.alarm.beep.beep", backgroundColor:"#ffffff", nextState:"turningon"
 		}
 		standardTile("refresh", "device.switch", width: 2, height: 2, decoration: "flat") {
 			state "icon", action:"refresh", icon:"st.secondary.refresh", defaultState: true
@@ -80,7 +83,7 @@ metadata {
 		}
 
 		main "videoPlayer"
-		details(["videoPlayer", "motion", "refresh"])
+		details(["videoPlayer", "motion", "audio", "refresh"])
 	}
 
 	preferences {
@@ -126,6 +129,7 @@ def getInHomeURL() {
 def installed() {
 	log.debug("installed()")
 	sendEvent(name:"switch", value:"unknown")
+    sendEvent(name:"switch2", value:"unknown")
 }
 
 def updated() {
@@ -188,6 +192,13 @@ def parse(String description) {
 		}
 		else if (lastRequest.uri.endsWith("/videoanalysis")) {
 			handleVideoAnalysisResponse(msg, lastRequest)
+            if (lastRequest.method == "GET") {
+                checkAudioDetectionSetting()
+            }
+			return
+		}
+        else if (lastRequest.uri.endsWith("/audiodetection")) {
+			handleAudioAnalysisResponse(msg, lastRequest)
 			return
 		}
 		else {
@@ -229,6 +240,7 @@ def handleVideoAnalysisResponse(response, lastRequest) {
 	log.debug("handleVideoAnalysisResponse()")
 	def state = "unknown"
 	if (lastRequest.method == "GET") {
+        log.debug(response)
 		def detectionType = response.data['Channel.0.DetectionType']
 		state = (detectionType == "Off" ? "off" : "on")
 	}
@@ -239,6 +251,25 @@ def handleVideoAnalysisResponse(response, lastRequest) {
 	}
 	log.debug("Motion detection is now ${state}")
 	sendEvent(name:"switch", value:state)
+}
+
+def handleAudioAnalysisResponse(response, lastRequest) {
+	log.debug("handleAudioAnalysisResponse()")
+	def state = "unknown"
+	if (lastRequest.method == "GET") {
+        log.debug(response)
+		def detectionType = response.data['Channel.0.Enable']
+        log.debug(detectionType)
+		state = (detectionType == false ? "off" : "on")
+	}
+	else if (lastRequest.method == "PUT") {
+		// resonse.data is empty on PUT success, we must use lastRequest data
+        log.debug(response)
+		def detectionType = lastRequest.payload['Enable']
+		state = (detectionType == false ? "off" : "on")
+	}
+	log.debug("Audio detection is now ${state}")
+	sendEvent(name:"switch2", value:state)
 }
 
 def handleNeedsAuthResponse(msg) {
@@ -275,9 +306,23 @@ def checkMotionDetectionSetting() {
 	sendHubCommand(action)
 }
 
+def checkAudioDetectionSetting() {
+	log.debug("checkMotionDetectionSetting()")
+	def action = createCameraRequest("GET", "/stw-cgi-rest/eventsources/audiodetection", true)
+	// log.debug("checking motion detection setting with request: ${action}")
+	sendHubCommand(action)
+}
+
 def setMotionDetectionSetting(on) {
 	def detectionType = on ? "MotionDetection" : "Off"
 	def action = createCameraRequest("PUT", "/stw-cgi-rest/eventsources/videoanalysis", true, [DetectionType: detectionType])
+	// log.debug("Setting motion detection setting ${on} with request: ${action}")
+	sendHubCommand(action)
+}
+
+def setAudioDetectionSetting(on) {
+	def type = on ? true : false
+	def action = createCameraRequest("PUT", "/stw-cgi-rest/eventsources/audiodetection", true, [Enable: type])
 	// log.debug("Setting motion detection setting ${on} with request: ${action}")
 	sendHubCommand(action)
 }
@@ -290,6 +335,14 @@ def on() {
 def off() {
 	log.debug("off()")
 	setMotionDetectionSetting(false)
+}
+
+def audioOn() {
+	setAudioDetectionSetting(true)
+}
+
+def audioOff() {
+	setAudioDetectionSetting(false)
 }
 
 def clearDigestAuthData() {
